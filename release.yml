@@ -1,0 +1,92 @@
+# .github/workflows/release.yml
+# Builds signed Sly3D installers for macOS and Windows when you push a version tag (v0.9.0, v1.0.0, ...),
+# attaches them to a draft GitHub release, and adds copies with fixed names so the website's
+# Download buttons always point at the newest version:
+#   https://github.com/TokenMaker/Sly3d/releases/latest/download/Sly3D-mac.dmg
+#   https://github.com/TokenMaker/Sly3d/releases/latest/download/Sly3D-windows-setup.exe
+#
+# Required repository secrets (Settings → Secrets and variables → Actions):
+#   macOS: APPLE_CERTIFICATE (base64 .p12), APPLE_CERTIFICATE_PASSWORD, APPLE_SIGNING_IDENTITY,
+#          APPLE_ID, APPLE_PASSWORD (app-specific password), APPLE_TEAM_ID
+#   Windows (Azure Artifact Signing): AZURE_CLIENT_ID, AZURE_CLIENT_SECRET, AZURE_TENANT_ID
+#          plus bundle.windows.signCommand set in tauri.conf.json
+
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: macos-latest
+            args: "--target universal-apple-darwin"
+            fixed: Sly3D-mac.dmg
+            pattern: "*/bundle/dmg/*.dmg"
+          - platform: windows-latest
+            args: "--bundles nsis"
+            fixed: Sly3D-windows-setup.exe
+            pattern: "*/bundle/nsis/*-setup.exe"
+    runs-on: ${{ matrix.platform }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+          cache: pnpm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+
+      - uses: swatinem/rust-cache@v2
+
+      - name: Install front-end dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build, sign and attach to a draft release
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # macOS signing + notarization
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          # Windows signing (used by the signCommand in tauri.conf.json)
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: "Sly3D __VERSION__"
+          releaseBody: "Download the installer for your computer below. Check the .sha256 file to verify your download."
+          releaseDraft: true
+          prerelease: false
+          args: ${{ matrix.args }}
+
+      - name: Add fixed-name copy and SHA-256 checksum
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          file=$(find . -path "${{ matrix.pattern }}" -not -path "*/node_modules/*" | head -n 1)
+          if [ -z "$file" ]; then echo "Installer not found"; exit 1; fi
+          cp "$file" "${{ matrix.fixed }}"
+          sha256sum "${{ matrix.fixed }}" > "${{ matrix.fixed }}.sha256"
+          cat "${{ matrix.fixed }}.sha256"
+          gh release upload "${{ github.ref_name }}" "${{ matrix.fixed }}" "${{ matrix.fixed }}.sha256" --clobber
