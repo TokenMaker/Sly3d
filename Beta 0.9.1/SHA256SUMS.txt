@@ -1,1 +1,2 @@
 ac9797f53c6a75787ecd71085c89aef58f6ea69d3d05a52c66c96881dea751cc  Sly3D_Beta_0.9.1_universal.dmg
+1a47ae87d524f3c77e30a2c900dfbc6cae80f12348391bbbbcb7919b54e420df  Sly3D_Beta_0.9.1_x64-setup.exe
